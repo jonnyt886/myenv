@@ -17,13 +17,13 @@ How can `myenv` help you? Well, if you use more than one system and want to sync
 Usage: `myenv <operation>`
 
 Operation can be one of:
-  `create <profilename>`
-  `edit <profilename>` Create a new profile directory and open up its `profile.json` file in an editor. When `create` is specified, if the profile already exists, an error will occur.
+-  `create <profilename>`
+-  `edit <profilename>` Create a new profile directory and open up its `profile.json` file in an editor. When `create` is specified, if the profile already exists, an error will occur.
 
-  `install` Install the current profile. "Install" currently means creating the symlinks configured in
+-  `install` Install the current profile. "Install" currently means creating the symlinks configured in
       the profile's `profile.json` in your home directory.
 
-  `profile` This is designed to be called by your shell when you login; it finds all myenv profiles to activate and installs them. You should call it from your ~/.bash_profile, ~/.zprofile or ~/.profile.
+-  `profile` This is designed to be called by your shell when you login; it finds all myenv profiles to activate and installs them. You should call it from your ~/.bash_profile, ~/.zprofile or ~/.profile (make sure you use `eval`, for example `eval ``myenv profile```)
 
 ## Profiles
 A profile is just a collection of files with a `profile.json` file. Here's an example of `profile.json`:
@@ -56,7 +56,6 @@ You can use a profile for whatever you like; the `profile.json` adds a few usefu
   - `selectors` allow you to select your profile based on the existence of a file on your filesystem, or on your username or hostname.  This is handy if you have your myenv git repository checked out on more than one machine, or more than one user account, and you want to use a different profile automagically based on some sort of context. You may also only want to enable a profile (e.g. your 'dev' profile) if certain files/directories exist (e.g. `~/git` exists with all your repos and code). See SELECTORS, below, for more info. Remember that more than one profile can be active at once.
   - `path` allows you to add particular directories in your profile to your `PATH`. myenv makes this work by symlinking `~/.profile` to a script that reads your `profile.json`.
   - `env` allows you to set up other environment variables according to your needs (e.g. `EDITOR`, `HTTP_PROXY`, `PYTHONPATH`, etc).
-  - `onlogin` allows you to run scripts when you login and your profile is first loaded. I recommend you use the more standard configuration for this (e.g. `~/.config/autostart/` or `~/.config/openbox/autostart)` but this might have some uses in certain cases, particularly if you don't use a graphical desktop.
 
 All these features are implemented by plugins; for a full list of plugins, see below.
 
