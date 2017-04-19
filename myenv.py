@@ -374,14 +374,14 @@ class Plugin(object):
         """Run immediately before `install` is run for all profiles."""
         pass
 
-    def install(self, profile):
+    def install(self, profiles):
         """When the user invokes `myenv install`, this function is called
-        for every active profile."""
+        with all active profiles passed in."""
         pass
 
-    def generateDotProfile(self, profile):
-        """When `myenv profile` is invoked, this function is called for
-        every active profile.
+    def generateDotProfile(self, profiles):
+        """When `myenv profile` is invoked, this function is called with all
+        active profiles passed in.
 
         This function should return a string (or list of strings) containing
         shell commands that will be executed by the user's shell when they
@@ -445,7 +445,11 @@ class SymlinksPlugin(Plugin):
             if lexists(symlink_path):
                 os.remove(symlink_path)
         
-    def install(self, profile):
+    def install(self, profiles):
+        for profile in profiles:
+            self.installProfile(profile)
+
+    def installProfile(self, profile):
         """Re-creates symlinks for the given profile."""
         # nb all paths in this dict will be absolute
         new_symlinks = self.get_symlinks(profile)
@@ -458,13 +462,15 @@ class SymlinksPlugin(Plugin):
             if lexists(target):
                 if isdir(target):
                     if not isdir(source):
-                        raise OSError(target+' is a directory but source file in profile '+profile.name+' is not')
+                        raise OSError(target+' is a directory but source file in profile '+
+                            profile.name+' is not')
                     #shutil.rmtree(target)
                     os.remove(target) # it's still a symlink so don't rmtree()
                 
                 elif isfile(target):
                     if not isfile(source):
-                        raise OSError(target+' is a directory but source file in profile '+profile.name+' is not')
+                        raise OSError(target+' is a directory but source file in profile '+
+                            profile.name+' is not')
                     os.remove(target)
                 
                 else:
@@ -474,14 +480,18 @@ class SymlinksPlugin(Plugin):
             dest_file = join(home, target)
 
             if not exists(source_file):
-                print('Warning: source file ' + source_file + ' does not exist (creating symlink to it anyway)', file=sys.stderr)
+                print('Warning: source file ' + source_file + 
+                    ' does not exist (creating symlink to it anyway)', file=sys.stderr)
 
             try:
                 os.symlink(source_file, dest_file)
             except OSError as ex:
                 print('Error while creating', dest_file + ':', str(ex), file=sys.stderr)
 
-
+# TODO TODO TODO TODO
+# TODO TODO TODO TODO
+# TODO TODO TODO TODO
+# TODO TODO TODO TODO
 class CopiesPlugin(Plugin):
     def get_copies(self, profile):
         """Get all copies for this profile (full paths)
@@ -529,44 +539,76 @@ class CopiesPlugin(Plugin):
                 print('Error while creating', join(home, target) + ':', str(ex), file=sys.stderr)
 
 class EnvPlugin(Plugin):
-    def generateDotProfile(self, profile):
-        env = profile.json.get('env', {})
-        ret = []
+    def generateDotProfile(self, profiles):
+        # As multiple profiles may set the same env var,
+        # we need to co-ordinate a bit; ret is a dict
+        # of var name -> var value(s). var value can either
+        # be a str or a list.
+        #
+        # If a profile specifies a var value as a string, this
+        # is assumed *not* to be a path, and we assume that the
+        # variable is intended to only hold one value, therefore
+        # if several profiles set the variable the last one
+        # wins and overwrites previous values.
+        #
+        # If a profile specifies a var value as  a list, we
+        # assume that the variable can hold multiple values
+        # (separated by ':' as usual) and that each value is
+        # a path. In this case, if several profiles set values
+        # for the variable, each value is *added* to the list.
+        ret = {}
 
-        for k, v in env.items():
-            # k is varname, v is value (v might be an 
-            # array, in which case we join it with a colon)
-            if type(v) is str:
-                ret.append('export %s="%s"' % (k, v))
+        for profile in profiles:
+            env = profile.json.get('env', {})
 
-            elif type(v) is list:
-
-                new_v = []
-
-                for vv in v:
-                    # if the value is a list, assume we are dealing with
-                    # a list of paths
-                    vv = expand(vv)
-
-                    if not os.path.isabs(vv):
-                        # if it's relative, assume it's relative to profile
-                        # dir and update the path
-                        vv = os.path.join(profile.path, vv)
-
-                    new_v.append(vv)
+            for k, v in env.items():
+                # k is varname, v is value (v might be a list)
+                print('envp %s %s=%s'%(profile.name, k, str(v)), file=sys.stderr)
                 
-                # add the existing variable value to the list, so that we are
-                # adding to the existing variable, not replacing it (important
-                # for things like $PATH)
-                new_v.insert(0, os.environ['PATH'])
-                
-                ret.append('export %s=%s' % (k, ':'.join(new_v)))
+                if type(v) is str:
+                    if k in ret and type(ret[k]) is not str:
+                        raise ValueError('profile %s specified enviroment variable "%s" '+
+                                'as a string but it should be a list' % (profile.name, k))
+                    ret[k] = v
 
+                elif type(v) is list:
+                    new_v = []
+
+                    for vv in v:
+                        # if v is a list, assume a list of paths
+                        vv = expand(vv)
+
+                        if not os.path.isabs(vv):
+                            # assume relative to profile dir
+                            vv = os.path.join(profile.path, vv)
+
+                        new_v.append(vv)
+
+                    if k in ret:
+                        if type(ret[k]) is not list:
+                            raise ValueError('profile %s specified enviroment variable "%s" '+
+                                    'as a list but it should be a string' % (profile.name, k))
+                        ret[k].extend(new_v)
+
+                    else:
+                        ret[k] = new_v
+                    
+                else:
+                    raise ValueError('value for environment variable '+v+
+                        ' is invalid; should be a string or list')
+
+        rets = [] # list of `export` statements as strings
+        for k, v in ret.items():
+            if type(ret[k]) is list:
+                if k in os.environ:
+                    rets.append('export %s=%s:%s' % (k, os.environ[k], ':'.join(v)))
+                else:
+                    rets.append('export %s=%s' % (k, ':'.join(v)))
             else:
-                raise ValueError('value for environment variable '+v+
-                    ' is invalid; should be a string or list')
+                rets.append('export %s=%s' % (k, v))
 
-        return ret
+        return rets
+
 
 def expand(s):
     return os.path.expanduser(os.path.expandvars(s))
@@ -661,14 +703,14 @@ def runPluginBeforeInstall():
     for p in ACTIVE_PLUGINS:
         p.beforeInstall()
 
-def runPluginInstall(profile):
+def runPluginInstall(profiles):
     for p in ACTIVE_PLUGINS:
-        p.install(profile)
+        p.install(profiles)
 
-def runPluginGenerateDotProfile(profile):
+def runPluginGenerateDotProfile(profiles):
     ret = []
     for p in ACTIVE_PLUGINS:
-        r = p.generateDotProfile(profile)
+        r = p.generateDotProfile(profiles)
         if r is not None: ret.append(r)
     return ret
  
@@ -724,17 +766,14 @@ elif sys.argv[1] == 'install':
     # given a current env installation, apply symlinks from the current profile
     # to the user's home directory
     runPluginBeforeInstall()
-
-    for profile in profiles:
-        runPluginInstall(profile)
+    runPluginInstall(profiles)
 
 elif sys.argv[1] == 'profile':
-    for profile in profiles:
-        ret = runPluginGenerateDotProfile(profile)
+    ret = runPluginGenerateDotProfile(profiles)
 
-        # https://stackoverflow.com/a/11264751/1432488
-        rret = [val for sublist in ret for val in sublist]
-        [print(r) for r in rret]
+    # https://stackoverflow.com/a/11264751/1432488
+    rret = [val for sublist in ret for val in sublist]
+    [print(r) for r in rret]
 
 else:
        usage_and_exit()
