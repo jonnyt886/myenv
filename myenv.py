@@ -563,8 +563,6 @@ class EnvPlugin(Plugin):
 
             for k, v in env.items():
                 # k is varname, v is value (v might be a list)
-                print('envp %s %s=%s'%(profile.name, k, str(v)), file=sys.stderr)
-                
                 if type(v) is str:
                     if k in ret and type(ret[k]) is not str:
                         raise ValueError('profile %s specified enviroment variable "%s" '+
