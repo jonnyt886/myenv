@@ -139,47 +139,39 @@ def add_dicts(*dd):
 #             the file in remote/ and 'copyname' is the name of the copied file in the user's homedir.
 class RemoteProfile:
     def __init__(self, profiledir):
-        jsonfile = join(profiledir, 'profile.json')
-        if not os.path.isfile(jsonfile):
-            raise OSError(jsonfile+' does not exist')
-
-        with open(jsonfile, 'r') as f:
-            self.json = json.load(f)
-            self.name = os.path.basename(profiledir)
-            #self.copies = j.get('copies', {})
-
-            self.selector = None
-            selectorJson = self.json.get('selectors', None)
-            if selectorJson != None:
-                self.selector = create_selectors(selectorJson)
-                
         self.path = profiledir
+        self.name = os.path.basename(profiledir)
+        self.safeToWrite = True # set to false if JSON failed to load
+        self.jsonfile = join(profiledir, 'profile.json')
 
-#    # Get all copies for this profile and any parent profiles
-#    # Returns a dict of target file (relative to user's home) -> full-path-of-source-file
-#    def get_all_copies(self):
-#        result = self.get_copies()
-#
-#        if self.parent != None:
-#            parent_result = self.parent.get_all_copies()
-#            result = add_dicts(parent_result, result)
-#
-#        return result
-#
-#    # Get all symlinks for this profile and any parent profiles
-#    # Returns a dict of target file -> source-file
-#    #   note: paths should be ABSOLUTE
-#    def get_all_symlinks(self):
-#        result = self.get_symlinks()
-#
-#        if self.parent != None:
-#            parent_result = self.parent.get_all_symlinks()
-#
-#            # put result second, so that its values take precedence
-#            result = add_dicts(parent_result, result)
-#
-#        return result
-#
+        if not os.path.isfile(self.jsonfile):
+            raise OSError(self.jsonfile+' does not exist')
+
+        self.loadJson()
+
+    def loadJson(self):
+        with open(self.jsonfile, 'r') as f:
+            try:
+                self.json = json.load(f)
+
+                self.selector = None
+                selectorJson = self.json.get('selectors', None)
+                if selectorJson != None:
+                    self.selector = create_selectors(selectorJson)
+
+            except json.decoder.JSONDecodeError as e:
+                self.safeToWrite = False
+                self.selector = [NeverSelector({})]
+
+                print('warning: '+self.jsonfile+' is not valid JSON, '+
+                    'this profile will be skipped')
+
+    def saveJson(self):
+        if not self.safeToWrite:
+            print('warning: will not write '+self.jsonfile+' as it could not be loaded')
+        with open(self.jsonfile, 'w') as f:
+            json.dump(self.json, f, indent=4)
+
     def __repr__(self):
         return self.name
 
@@ -196,6 +188,12 @@ class Selector(object):
         """Function to determine whether the selector is active or 
         not. Subclasses should override this."""
         return True
+
+class NeverSelector(Selector):
+    """Selector that is never active; used internally by myenv when a profile
+    fails to load and therefore is disabled."""
+    def is_active(self):
+        return False
 
 class HostSelector(Selector):
     """Selects based on hostname. Supports matching on hostname
@@ -607,6 +605,27 @@ class EnvPlugin(Plugin):
 
         return rets
 
+class OnLoginPlugin(Plugin):
+    def generateDotProfile(self, profiles):
+        ret = []
+
+        for profile in profiles:
+            if 'onlogin' in profile.json:
+                for f in profile.json['onlogin']:
+                    # squirt the content of each file in 'onlogin' into
+                    # the profile output
+                    fpath = join(profile.path, f)
+                    if not os.path.isfile(fpath):
+                        print('warning: onlogin file "'+f+'" in profile "'+profile.name+
+                            '" does not exist', file=sys.stderr)
+                        continue
+
+                    ret.append('# '+fpath)
+                    with open(fpath, 'r') as ff:
+                        for line in ff:
+                            ret.append(line.rstrip('\n'))
+
+        return ret
 
 def expand(s):
     return os.path.expanduser(os.path.expandvars(s))
@@ -688,7 +707,7 @@ def select_profiles():
     return ret
 
 def usage_and_exit():
-    print('Usage:', sys.argv[0], ' <install|profile>', file=sys.stderr)
+    print('Usage:', sys.argv[0], ' <install|profile|create|edit|git>', file=sys.stderr)
     sys.exit(1)
 
 
@@ -696,6 +715,7 @@ ACTIVE_PLUGINS = [
     SymlinksPlugin(),
     CopiesPlugin(),
     EnvPlugin(),
+    OnLoginPlugin()
 ]
 def runPluginBeforeInstall():
     for p in ACTIVE_PLUGINS:
@@ -711,7 +731,30 @@ def runPluginGenerateDotProfile(profiles):
         r = p.generateDotProfile(profiles)
         if r is not None: ret.append(r)
     return ret
- 
+
+def createNewProfileIfNeeded(profileName, profileOpts = {}):
+    """Creates a new profile by the given name if it doesn't already
+    exist in the profile directory. The profile will contain just a
+    profile.json file containing "{}".
+
+    If profileOpts is specified, this should be a dict of extra options
+    to add to the profile.json.
+
+    If the profile *does* exist, the content of profileOpts are merged
+    into the profile.json for that profile using updateProfile(). 
+
+    Returns a RemoteProfile instance representing the new profile.
+    """
+    profilePath = join(profile_dir, profileName)
+    profileJsonPath = join(profilePath, 'profile.json')
+
+    if not os.path.exists(profilePath):
+        os.mkdir(profilePath)
+        with open(profileJsonPath, 'w') as f:
+            json.dump(profileOpts, f, indent=4)
+
+    return RemoteProfile(profilePath)
+
 #
 # Script starts...
 #
@@ -747,13 +790,7 @@ if len(sys.argv) < 2:
 
 elif sys.argv[1] == 'create' or sys.argv[1] == 'edit':
     profileName = sys.argv[2]
-    profilePath = join(profile_dir, profileName)
-    profileJsonPath = join(profilePath, 'profile.json')
-
-    if not os.path.exists(profilePath):
-        os.mkdir(profilePath)
-        with open(profileJsonPath, 'w') as f:
-            f.write('{\n}\n');
+    profileJsonPath = createNewProfileIfNeeded(profileName).jsonfile
 
     editor = 'nano'
     if 'EDITOR' in os.environ: editor = os.environ['EDITOR']
@@ -761,6 +798,79 @@ elif sys.argv[1] == 'create' or sys.argv[1] == 'edit':
     subprocess.call(editor+' '+profileJsonPath, shell=True)
 
 elif sys.argv[1] == 'install':
+    # install myenv in the user's home directory; this will hi-jack
+    # all the profile files (.profile, .zprofile, .xprofile and .bash_profile)
+    # copying the original file, if it exists, to a new 'original' myenv
+    # profile so that the user's existing configuration is not affected,
+    # and then inserts the following into each of those files:
+    #
+    # if [ -z "$MYENV_RUN" ]; then
+    #   pushd ~/github/myenv >/dev/null
+    #   `./myenv.py profile`
+    #   export MYENV_RUN=yes
+    #   popd >/dev/null
+    # fi
+    #
+    # If the 'original' profile doesn't already exist it is created with no
+    # selectors so that it runs at every startup.
+
+    origProfile = None
+
+    for shellProfileFile in ['.profile', '.zprofile', '.xprofile', '.bash_profile']:
+        shellProfileFilePath = join(home, shellProfileFile)
+        newPath = None
+
+        if os.path.exists(shellProfileFilePath):
+            isMyEnvFile = False
+            with open(shellProfileFilePath, 'r') as f:
+                # check if the first line looks like something we wrote; if it
+                # is, then skip the file. by only checking the beginning of the
+                # file we enable users to edit the file to their liking if they
+                # need to without us clobbering it.
+                if f.readline()[0:36] == '# auto-generated by `myenv install`.':
+                    isMyEnvFile = True
+
+            if isMyEnvFile: continue
+
+            # get the 'original' profile; or reuse the existing instance
+            # that need to be preserved
+            if origProfile is None:
+                origProfile = createNewProfileIfNeeded('original')
+
+            newName = shellProfileFile[1:]
+            newPath = join(origProfile.path, newName) # strip leading '.'
+
+            if os.path.exists(newPath):
+                print(newPath+' already exists, skipping', file=sys.stderr)
+           
+            print('moving', shellProfileFile, 'to "original" profile in', origProfile.path) 
+            os.rename(shellProfileFilePath, newPath)
+
+            if not 'onlogin' in origProfile.json:
+                origProfile.json['onlogin'] = []
+
+            origProfile.json['onlogin'].append(newName)
+
+            # saveJson() with every loop iteration, so that any errors on subsequent loops
+            # don't leave the profile in an inconsistent state
+            origProfile.saveJson()
+
+        with open(shellProfileFilePath, 'w') as f:
+            f.write('# auto-generated by `myenv install`.\n')
+            if newPath is not None:
+                f.write('# The previous version of this file has been moved to '+newPath+'.\n')
+            f.write('# You should add any further customisations to that file or to a'+
+                ' separate myenv profile. See the myenv help page for more details.\n')
+            f.write('# This file will not be overwritten by subsequent invocations of'+
+                '`myenv install` as long as you preserve the first line of this file,\n')
+            f.write('# though it\'s strongly recommended to modify your configuration via'+
+                ' your myenv profiles instead of this file to keep things sane.\n')
+            f.write('\n')
+            f.write('if [ -z "$MYENV_RUN" ]; then\n')
+            f.write('  `'+os.path.abspath(sys.argv[0])+' profile`\n')
+            f.write('  export MYENV_RUN=yes\n')
+            f.write('fi\n')
+
     # given a current env installation, apply symlinks from the current profile
     # to the user's home directory
     runPluginBeforeInstall()
