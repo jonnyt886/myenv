@@ -773,5 +773,11 @@ elif sys.argv[1] == 'profile':
     rret = [val for sublist in ret for val in sublist]
     [print(r) for r in rret]
 
+elif sys.argv[1] == 'git':
+    args = ["git"]
+    if sys.argv[1:] != None: args.extend(sys.argv[2:])
+    subprocess.Popen(args, cwd=profile_dir, shell=False,
+        stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr)
+
 else:
        usage_and_exit()
