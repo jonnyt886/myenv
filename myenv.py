@@ -485,6 +485,10 @@ class SymlinksPlugin(Plugin):
                 print('Warning: source file ' + source_file + 
                     ' does not exist (creating symlink to it anyway)', file=sys.stderr)
 
+            dest_file_dir = dirname(dest_file)
+            if not exists(dest_file_dir):
+                os.makedirs(dest_file_dir)
+
             try:
                 os.symlink(source_file, dest_file)
             except OSError as ex:
