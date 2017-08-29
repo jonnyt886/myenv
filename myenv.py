@@ -169,8 +169,10 @@ class RemoteProfile:
     def saveJson(self):
         if not self.safeToWrite:
             print('warning: will not write '+self.jsonfile+' as it could not be loaded')
-        with open(self.jsonfile, 'w') as f:
-            json.dump(self.json, f, indent=4)
+
+        else:
+            with open(self.jsonfile, 'w') as f:
+                json.dump(self.json, f, indent=4)
 
     def __repr__(self):
         return self.name
@@ -456,14 +458,16 @@ class SymlinksPlugin(Plugin):
         # if the target symlink exists, check that its type (file/dir)
         # is the same as the file that it is pointing to
         for target, source in new_symlinks.items():
-            # lexists == True for symlinks that exist but are broken
+            # lexists == True for paths that exist (incl broken symlinks)
             if lexists(target):
-                if isdir(target):
+                if islink(target):
+                    os.remove(target) # it's still a symlink so don't rmtree()
+
+                elif isdir(target):
                     if not isdir(source):
                         raise OSError(target+' is a directory but source file in profile '+
                             profile.name+' is not')
-                    #shutil.rmtree(target)
-                    os.remove(target) # it's still a symlink so don't rmtree()
+                    shutil.rmtree(target)
                 
                 elif isfile(target):
                     if not isfile(source):
