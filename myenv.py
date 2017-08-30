@@ -494,10 +494,6 @@ class SymlinksPlugin(Plugin):
             except OSError as ex:
                 print('Error while creating', dest_file + ':', str(ex), file=sys.stderr)
 
-# TODO TODO TODO TODO
-# TODO TODO TODO TODO
-# TODO TODO TODO TODO
-# TODO TODO TODO TODO
 class CopiesPlugin(Plugin):
     def get_copies(self, profile):
         """Get all copies for this profile (full paths)
@@ -506,23 +502,39 @@ class CopiesPlugin(Plugin):
         result = {}
         copies = profile.json.get('copies', {})
         for k, v in copies.items():
-            result[v] = join(profile.path, k)
+            kk = expand(k)
+            if not os.path.isabs(kk): kk = join(home, kk)
+            vv = join(profile.path, expand(v))
+
+            if not os.path.exists(vv):
+                raise OSError(v+' is defined in profile '+profile.name+' but does not exist')
+
+            if not os.path.isabs(kk):
+                result[kk] = vv
+            else:
+                # if they specified an absolute path that's fine but
+                # ensure that it is within the user's homedir
+                if not kk.startswith(home):
+                    raise OSError('copy-file '+k+' in profile '+profile.name+' is not inside $HOME')
+
+                result[kk] = vv
+
         return result 
 
+    def install(self, profiles):
+        for profile in profiles:
+            self.installProfile(profile)
 
-    # Re-creates copied files for the given profile
-    def do_copies(self, profile):
+    def installProfile(self, profile):
         new_copies = self.get_copies(profile)
 
         for v in list(new_copies.keys()):
             vpath = join(home, v)
             if exists(vpath):
-                if isfile(vpath) or islink(vpath):
-                    os.remove(vpath)
-                elif isdir(vpath):
+                if isdir(vpath):
                     shutil.rmtree(vpath)
                 else:
-                    raise OSError(str(src) + ' - must be a file or dir')
+                    os.remove(vpath)
 
         for target, src in new_copies.items():
             try:
@@ -531,7 +543,7 @@ class CopiesPlugin(Plugin):
                 if isfile(src):
                     target_dir = dirname(dst)
                     if not exists(target_dir):
-                        os.mkdir(target_dir)
+                        os.makedirs(target_dir)
 
                     shutil.copy2(src, dst)
 
@@ -644,6 +656,7 @@ def create_selectors(json):
     instances on the profile."""
     SELECTOR_MAPPINGS = {
         "host": HostSelector,
+        "hostname": HostSelector,
         "dir": DirSelector,
         "file": FileSelector,
         "and": AndSelector,
@@ -775,8 +788,12 @@ if not os.path.exists(profile_dir):
 for f in os.listdir(profile_dir):
     ffull = join(profile_dir, f)
     if isdir(ffull) and isfile(join(ffull, 'profile.json')):
-        p = RemoteProfile(ffull)
-        add_profile(p)
+        try:
+            p = RemoteProfile(ffull)
+            add_profile(p)
+
+        except Exception as ex:
+            print('error loading profile',f+':',str(ex)+'\nskipping profile',f, file=sys.stderr)
 
 profiles = select_profiles()
 print('Active profiles', profiles, file=sys.stderr)
