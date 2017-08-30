@@ -137,7 +137,7 @@ def add_dicts(*dd):
 #            apps that don't support symlinks (when running under Cygwin on Windows boxes).
 #             Mapping is 'path' -> 'copyname' where 'path' is the name of
 #             the file in remote/ and 'copyname' is the name of the copied file in the user's homedir.
-class RemoteProfile:
+class RemoteProfile(object):
     def __init__(self, profiledir):
         self.path = profiledir
         self.name = os.path.basename(profiledir)
@@ -415,7 +415,7 @@ class SymlinksPlugin(Plugin):
             else:
                 # if they specified an absolute path that's fine but
                 # ensure that it is within the user's homedir
-                if not kk.startswith(home):
+                if not kk.startswith(home) and profile.json.get('outside_home', False) != True:
                     raise OSError('symlink '+k+' in profile '+profile.name+' is not inside $HOME')
 
                 result[kk] = vv
@@ -514,7 +514,7 @@ class CopiesPlugin(Plugin):
             else:
                 # if they specified an absolute path that's fine but
                 # ensure that it is within the user's homedir
-                if not kk.startswith(home):
+                if not kk.startswith(home) and profile.json.get('outside_home', False) != True:
                     raise OSError('copy-file '+k+' in profile '+profile.name+' is not inside $HOME')
 
                 result[kk] = vv
@@ -700,17 +700,29 @@ def get_home():
 def strip_trailing_backslash(str):
     return str.rstrip(' /')
 
-# Add a new profile to the profiles list
-def add_profile(profile):
-    profiles[profile.name] = profile
-
-def select_profiles():
+def select_profiles(profile_dir):
     """Figure out which profiles we should use, based on selectors.
     First we try an exact match - if we don't get anything then we 
-    try a 'fuzzy' match."""
-    ret = []
+    try a 'fuzzy' match. Returns a dict: {
+        profiles: <list of profiles that run normally>
+        rootProfiles: <list of profiles where plugins need to run as root>
+    }"""
 
-    for (name, profile) in profiles.items():
+    ret = [] # normal profiles
+    rret = [] # profiles that we need to run as root (aka with sudo)
+    pp = {}
+
+    for f in os.listdir(profile_dir):
+        ffull = join(profile_dir, f)
+        if isdir(ffull) and isfile(join(ffull, 'profile.json')):
+            try:
+                p = RemoteProfile(ffull)
+                pp[p.name] = p
+
+            except Exception as ex:
+                print('error loading profile',f+':',str(ex)+'\nskipping profile',f, file=sys.stderr)
+
+    for (name, profile) in pp.items():
         if profile.selector == None:
             # no selector means always activate
             ret.append(profile)
@@ -723,9 +735,15 @@ def select_profiles():
                     break
 
             if add_it:
-                ret.append(profile)
+                if profile.json.get('run_as_root', False) == True:
+                    rret.append(profile)
+                else:
+                    ret.append(profile)
 
-    return ret
+    return {
+        'profiles': ret,
+        'rootProfiles': rret
+    }
 
 def usage_and_exit():
     print('Usage:', sys.argv[0], ' <install|profile|create|edit|git>', file=sys.stderr)
@@ -785,18 +803,8 @@ if not os.path.exists(profile_dir):
     print('creating profile directory '+profile_dir)
     os.mkdir(profile_dir)
 
-for f in os.listdir(profile_dir):
-    ffull = join(profile_dir, f)
-    if isdir(ffull) and isfile(join(ffull, 'profile.json')):
-        try:
-            p = RemoteProfile(ffull)
-            add_profile(p)
-
-        except Exception as ex:
-            print('error loading profile',f+':',str(ex)+'\nskipping profile',f, file=sys.stderr)
-
-profiles = select_profiles()
-print('Active profiles', profiles, file=sys.stderr)
+profiles = select_profiles(profile_dir)
+print('Active profiles', profiles['profiles'] + profiles['rootProfiles'], file=sys.stderr)
 
 # Assert that the script is run from ~/remote/
 script_abs_path = os.path.abspath(join(profile_dir, '..')).strip()
@@ -899,10 +907,36 @@ elif sys.argv[1] == 'install':
     # given a current env installation, apply symlinks from the current profile
     # to the user's home directory
     runPluginBeforeInstall()
-    runPluginInstall(profiles)
+    runPluginInstall(profiles['profiles'])
+
+    if len(profiles['rootProfiles']) > 0:
+        print('note: you have some profiles configured to run as root;\n'+
+            ' to do this, run `sudo myenv.py rootInstall`', file=sys.stderr)
+
+
+elif sys.argv[1] == 'rootInstall':
+    if len(sys.argv) < 3:
+        print('usage: myenv.py rootInstall <your username>')
+        sys.exit(1)
+
+    if os.getuid() != 0:
+        print('error: need to be root')
+        sys.exit(1)
+
+    targetUser = sys.argv[2]
+    profile_dir = expand('~'+targetUser+'/.myenv')
+    print('loading profiles from '+profile_dir, file=sys.stderr)
+    profiles = select_profiles(profile_dir)
+    print('Active profiles', profiles['profiles'] + profiles['rootProfiles'], file=sys.stderr)
+
+    if len(profiles['rootProfiles']) > 0:
+        runPluginInstall(profiles['rootProfiles'])
 
 elif sys.argv[1] == 'profile':
-    ret = runPluginGenerateDotProfile(profiles)
+    ret = runPluginGenerateDotProfile(profiles['profiles'])
+
+    # don't need to run this bit as root
+    ret.extend(runPluginGenerateDotProfile(profiles['rootProfiles']))
 
     # https://stackoverflow.com/a/11264751/1432488
     rret = [val for sublist in ret for val in sublist]
