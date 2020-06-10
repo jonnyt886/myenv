@@ -577,41 +577,45 @@ class EnvPlugin(Plugin):
         ret = {}
 
         for profile in profiles:
-            env = profile.yaml.get('env', {})
+            try:
+                env = profile.yaml.get('env', {})
 
-            for k, v in env.items():
-                # k is varname, v is value (v might be a list)
-                if type(v) is str:
-                    if k in ret and type(ret[k]) is not str:
-                        raise ValueError('profile %s specified enviroment variable "%s" '+
-                                'as a string but it should be a list' % (profile.name, k))
-                    ret[k] = v
-
-                elif type(v) is list:
-                    new_v = []
-
-                    for vv in v:
-                        # if v is a list, assume a list of paths
-                        vv = expand(vv)
-
-                        if not os.path.isabs(vv):
-                            # assume relative to profile dir
-                            vv = os.path.join(profile.path, vv)
-
-                        new_v.append(vv)
-
-                    if k in ret:
-                        if type(ret[k]) is not list:
+                for k, v in env.items():
+                    # k is varname, v is value (v might be a list)
+                    if type(v) is str:
+                        if k in ret and type(ret[k]) is not str:
                             raise ValueError('profile %s specified enviroment variable "%s" '+
-                                    'as a list but it should be a string' % (profile.name, k))
-                        ret[k].extend(new_v)
+                                    'as a string but it should be a list' % (profile.name, k))
+                        ret[k] = v
 
+                    elif type(v) is list:
+                        new_v = []
+
+                        for vv in v:
+                            # if v is a list, assume a list of paths
+                            vv = expand(vv)
+
+                            if not os.path.isabs(vv):
+                                # assume relative to profile dir
+                                vv = os.path.join(profile.path, vv)
+
+                            new_v.append(vv)
+
+                        if k in ret:
+                            if type(ret[k]) is not list:
+                                raise ValueError('profile %s specified enviroment variable "%s" '+
+                                        'as a list but it should be a string' % (profile.name, k))
+                            ret[k].extend(new_v)
+
+                        else:
+                            ret[k] = new_v
+                        
                     else:
-                        ret[k] = new_v
-                    
-                else:
-                    raise ValueError('value for environment variable '+v+
-                        ' is invalid; should be a string or list')
+                        raise ValueError('value for environment variable '+v+
+                            ' is invalid; should be a string or list')
+
+            except Exception as err:
+                raise Exception('error loading profile "{}"'.format(profile.name), err)
 
         rets = [] # list of `export` statements as strings
         for k, v in ret.items():
@@ -767,8 +771,14 @@ def runPluginInstall(profiles):
 def runPluginGenerateDotProfile(profiles):
     ret = []
     for p in ACTIVE_PLUGINS:
-        r = p.generateDotProfile(profiles)
-        if r is not None: ret.append(r)
+        try:
+            r = p.generateDotProfile(profiles)
+            if r is not None: ret.append(r)
+
+        except Exception as err:
+            print('Plugin ', p, 'encountered an error:', str(err), file=sys.stderr)
+            sys.exit(1)
+
     return ret
 
 def createNewProfileIfNeeded(profileName, profileOpts = {}):
