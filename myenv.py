@@ -11,7 +11,7 @@ usage: myenv <operation>
 Operation can be one of:
   create <profilename>
   edit <profilename>
-      Create a new profile directory and open up its `profile.json`
+      Create a new profile directory and open up its `profile.yaml`
       file in an editor. When `create` is specified, if the profile
       already exists, an error will occur.
 
@@ -19,7 +19,7 @@ Operation can be one of:
       Install the current profile.
 
       "Install" currently means creating the symlinks configured in
-      the profile's `profile.json` in your home directory.
+      the profile's `profile.yaml` in your home directory.
 
   profile
       This is designed to be called by your shell when you login; it
@@ -28,8 +28,8 @@ Operation can be one of:
 
 
 PROFILES
-A profile is just a collection of files with a `profile.json` file.
-You can use a profile for whatever you like; the `profile.json` adds
+A profile is just a collection of files with a `profile.yaml` file.
+You can use a profile for whatever you like; the `profile.yaml` adds
 a few useful features that myenv uses:
   - `symlinks` allows you to set up symlinks in your $HOME that point to
       files in your profile directory, when `myenv install` is called.
@@ -47,7 +47,7 @@ a few useful features that myenv uses:
       all your repos and code). See SELECTORS, below, for more info.
   - `path` allows you to add particular directories in your profile to
       your PATH. myenv makes this work by symlinking `~/.profile` to a
-      script that reads your `profile.json`.
+      script that reads your `profile.yaml`.
   - `env` allows you to set up other environment variables according to
       your needs (e.g. EDITOR, HTTP_PROXY, PYTHONPATH, etc).
   - `onlogin` allows you to run scripts when you login and your profile
@@ -61,7 +61,7 @@ see below.
 
 SELECTORS
 Selectors allow you to configure when your profile is active and when it
-is not. You configure them via the profile.json file like this:
+is not. You configure them via the profile.yaml file like this:
 
     {
       "selectors" : {
@@ -93,7 +93,7 @@ The current selectors are supported:
 
 PLUGINS
 Plugins implement the core functionality of myenv. They're activated by 
-specifying them in your profile.json file. The following plugins can be used:
+specifying them in your profile.yaml file. The following plugins can be used:
     "symlinks"  creates a symlink for each source/destination pair specified;
                 existing files will be overwritten!
 
@@ -107,7 +107,7 @@ specifying them in your profile.json file. The following plugins can be used:
 
 # note on imports - this script must be entirely self-standing, i.e. have
 # no dependencies beyond the Python3 core API
-import os, sys, shutil, json, subprocess
+import os, sys, shutil, yaml, subprocess
 from os.path import (join, exists, lexists, isfile, isdir, islink, dirname)
 import socket
 
@@ -141,38 +141,38 @@ class RemoteProfile(object):
     def __init__(self, profiledir):
         self.path = profiledir
         self.name = os.path.basename(profiledir)
-        self.safeToWrite = True # set to false if JSON failed to load
-        self.jsonfile = join(profiledir, 'profile.json')
+        self.safeToWrite = True # set to false if YAML failed to load
+        self.yamlfile = join(profiledir, 'profile.yaml')
 
-        if not os.path.isfile(self.jsonfile):
-            raise OSError(self.jsonfile+' does not exist')
+        if not os.path.isfile(self.yamlfile):
+            raise OSError(self.yamlfile+' does not exist')
 
-        self.loadJson()
+        self.loadYaml()
 
-    def loadJson(self):
-        with open(self.jsonfile, 'r') as f:
+    def loadYaml(self):
+        with open(self.yamlfile, 'r') as f:
             try:
-                self.json = json.load(f)
+                self.yaml = yaml.safe_load(f)
 
                 self.selector = None
-                selectorJson = self.json.get('selectors', None)
-                if selectorJson != None:
-                    self.selector = create_selectors(selectorJson)
+                selectorYaml = self.yaml.get('selectors', None)
+                if selectorYaml != None:
+                    self.selector = create_selectors(selectorYaml)
 
-            except json.decoder.JSONDecodeError as e:
+            except yaml.decoder.YAMLDecodeError as e:
                 self.safeToWrite = False
                 self.selector = [NeverSelector({})]
 
-                print('warning: '+self.jsonfile+' is not valid JSON, '+
+                print('warning: '+self.yamlfile+' is not valid YAML, '+
                     'this profile will be skipped')
 
-    def saveJson(self):
+    def saveYaml(self):
         if not self.safeToWrite:
-            print('warning: will not write '+self.jsonfile+' as it could not be loaded')
+            print('warning: will not write '+self.yamlfile+' as it could not be loaded')
 
         else:
-            with open(self.jsonfile, 'w') as f:
-                json.dump(self.json, f, indent=4)
+            with open(self.yamlfile, 'w') as f:
+                yaml.dump(self.yaml, f, indent=4)
 
     def __repr__(self):
         return self.name
@@ -183,7 +183,7 @@ class Selector(object):
     
     def __init__(self, config):
         """Initialise the selector; <config> is the content of the
-        JSON element that created this selector."""
+        YAML element that created this selector."""
         self.config = config
 
     def is_active(self):
@@ -201,7 +201,7 @@ class HostSelector(Selector):
     """Selects based on hostname. Supports matching on hostname
     (with DNS domain), e.g. "host.example.com", or an entire domain,
     e.g. ".example.com". You can specify multiple hostnames/
-    domainnames using a JSON array."""
+    domainnames using a YAML array."""
 
     def is_active(self):
         if type(self.config) is str:
@@ -398,7 +398,7 @@ class SymlinksPlugin(Plugin):
         Returns a dict of target file -> source-file
           note: paths should be ABSOLUTE"""
         result = {}
-        symlinks = profile.json.get('symlinks', {})
+        symlinks = profile.yaml.get('symlinks', {})
         for k, v in symlinks.items():
             kk = expand(k)
             if not os.path.isabs(kk): kk = join(home, kk)
@@ -415,7 +415,7 @@ class SymlinksPlugin(Plugin):
             else:
                 # if they specified an absolute path that's fine but
                 # ensure that it is within the user's homedir
-                if not kk.startswith(home) and profile.json.get('outside_home', False) != True:
+                if not kk.startswith(home) and profile.yaml.get('outside_home', False) != True:
                     raise OSError('symlink '+k+' in profile '+profile.name+' is not inside $HOME')
 
                 result[kk] = vv
@@ -500,7 +500,7 @@ class CopiesPlugin(Plugin):
         Returns a dict of target file (relative to user's home) -> 
             full-path-of-source-file"""
         result = {}
-        copies = profile.json.get('copies', {})
+        copies = profile.yaml.get('copies', {})
         for k, v in copies.items():
             kk = expand(k)
             if not os.path.isabs(kk): kk = join(home, kk)
@@ -514,7 +514,7 @@ class CopiesPlugin(Plugin):
             else:
                 # if they specified an absolute path that's fine but
                 # ensure that it is within the user's homedir
-                if not kk.startswith(home) and profile.json.get('outside_home', False) != True:
+                if not kk.startswith(home) and profile.yaml.get('outside_home', False) != True:
                     raise OSError('copy-file '+k+' in profile '+profile.name+' is not inside $HOME')
 
                 result[kk] = vv
@@ -577,7 +577,7 @@ class EnvPlugin(Plugin):
         ret = {}
 
         for profile in profiles:
-            env = profile.json.get('env', {})
+            env = profile.yaml.get('env', {})
 
             for k, v in env.items():
                 # k is varname, v is value (v might be a list)
@@ -630,8 +630,8 @@ class OnLoginPlugin(Plugin):
         ret = []
 
         for profile in profiles:
-            if 'onlogin' in profile.json:
-                for f in profile.json['onlogin']:
+            if 'onlogin' in profile.yaml:
+                for f in profile.yaml['onlogin']:
                     # squirt the content of each file in 'onlogin' into
                     # the profile output
                     fpath = join(profile.path, f)
@@ -650,9 +650,9 @@ class OnLoginPlugin(Plugin):
 def expand(s):
     return os.path.expanduser(os.path.expandvars(s))
 
-def create_selectors(json):
-    """Parses the given JSON (which should be the value of the 
-    "selectors" property in a profile JSON) and creates selector
+def create_selectors(yaml):
+    """Parses the given YAML (which should be the value of the 
+    "selectors" property in a profile YAML) and creates selector
     instances on the profile."""
     SELECTOR_MAPPINGS = {
         "host": HostSelector,
@@ -666,8 +666,8 @@ def create_selectors(json):
 
     ret = []
 
-    # json should be a dict
-    for (k, v) in json.items():
+    # yaml should be a dict
+    for (k, v) in yaml.items():
         if not k in SELECTOR_MAPPINGS:
             raise ValueError('unknown selector: '+k)
 
@@ -714,7 +714,7 @@ def select_profiles(profile_dir):
 
     for f in os.listdir(profile_dir):
         ffull = join(profile_dir, f)
-        if isdir(ffull) and isfile(join(ffull, 'profile.json')):
+        if isdir(ffull) and isfile(join(ffull, 'profile.yaml')):
             try:
                 p = RemoteProfile(ffull)
                 pp[p.name] = p
@@ -735,7 +735,7 @@ def select_profiles(profile_dir):
                     break
 
             if add_it:
-                if profile.json.get('run_as_root', False) == True:
+                if profile.yaml.get('run_as_root', False) == True:
                     rret.append(profile)
                 else:
                     ret.append(profile)
@@ -774,23 +774,23 @@ def runPluginGenerateDotProfile(profiles):
 def createNewProfileIfNeeded(profileName, profileOpts = {}):
     """Creates a new profile by the given name if it doesn't already
     exist in the profile directory. The profile will contain just a
-    profile.json file containing "{}".
+    profile.yaml file containing "{}".
 
     If profileOpts is specified, this should be a dict of extra options
-    to add to the profile.json.
+    to add to the profile.yaml.
 
     If the profile *does* exist, the content of profileOpts are merged
-    into the profile.json for that profile using updateProfile(). 
+    into the profile.yaml for that profile using updateProfile(). 
 
     Returns a RemoteProfile instance representing the new profile.
     """
     profilePath = join(profile_dir, profileName)
-    profileJsonPath = join(profilePath, 'profile.json')
+    profileYamlPath = join(profilePath, 'profile.yaml')
 
     if not os.path.exists(profilePath):
         os.mkdir(profilePath)
-        with open(profileJsonPath, 'w') as f:
-            json.dump(profileOpts, f, indent=4)
+        with open(profileYamlPath, 'w') as f:
+            yaml.dump(profileOpts, f, indent=4)
 
     return RemoteProfile(profilePath)
 
@@ -823,12 +823,12 @@ if len(sys.argv) < 2:
 
 elif sys.argv[1] == 'create' or sys.argv[1] == 'edit':
     profileName = sys.argv[2]
-    profileJsonPath = createNewProfileIfNeeded(profileName).jsonfile
+    profileYamlPath = createNewProfileIfNeeded(profileName).yamlfile
 
     editor = 'nano'
     if 'EDITOR' in os.environ: editor = os.environ['EDITOR']
-    print('running',editor+' '+profileJsonPath)
-    subprocess.call(editor+' '+profileJsonPath, shell=True)
+    print('running',editor+' '+profileYamlPath)
+    subprocess.call(editor+' '+profileYamlPath, shell=True)
 
 elif sys.argv[1] == 'install':
     # install myenv in the user's home directory; this will hi-jack
@@ -879,14 +879,14 @@ elif sys.argv[1] == 'install':
             print('moving', shellProfileFile, 'to "original" profile in', origProfile.path) 
             os.rename(shellProfileFilePath, newPath)
 
-            if not 'onlogin' in origProfile.json:
-                origProfile.json['onlogin'] = []
+            if not 'onlogin' in origProfile.yaml:
+                origProfile.yaml['onlogin'] = []
 
-            origProfile.json['onlogin'].append(newName)
+            origProfile.yaml['onlogin'].append(newName)
 
-            # saveJson() with every loop iteration, so that any errors on subsequent loops
+            # saveYaml() with every loop iteration, so that any errors on subsequent loops
             # don't leave the profile in an inconsistent state
-            origProfile.saveJson()
+            origProfile.saveYaml()
 
         with open(shellProfileFilePath, 'w') as f:
             f.write('# auto-generated by `myenv install`.\n')
